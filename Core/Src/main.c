@@ -59,7 +59,7 @@ typedef struct
   uint8_t rxSize;
 } pingPongFSM_t;*/
 
-int rxMargin = 1000;
+int rxMargin = 0;
 
 /* USER CODE END PTD */
 
@@ -72,8 +72,8 @@ int rxMargin = 1000;
 #define RF_FREQUENCY                                868000000 /* Hz */
 #define TX_OUTPUT_POWER                             1        /* dBm */
 #define LORA_BANDWIDTH                              0         /* Hz */
-#define LORA_SPREADING_FACTOR                       7
-#define LORA_CODINGRATE                             1
+#define LORA_SPREADING_FACTOR                       11
+#define LORA_CODINGRATE                             4
 #define LORA_PREAMBLE_LENGTH                        8         /* Same for Tx and Rx */
 #define LORA_SYMBOL_TIMEOUT                         5         /* Symbols */
 #define LORA_PA_OUTPUT								RFO_LP // OR RFO_HP if > 15 dBm
@@ -100,12 +100,12 @@ void eventRxTimeout(pingPongFSM_t *const fsm);
 void eventRxError(pingPongFSM_t *const fsm);
 void enterMasterRx(pingPongFSM_t *const fsm);
 void enterSlaveRx(pingPongFSM_t *const fsm);
-void enterMasterTx(pingPongFSM_t *const fsm);
+void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send);
 void enterSlaveTx(pingPongFSM_t *const fsm);
 void transitionRxDone(pingPongFSM_t *const fsm);
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 
-
+unsigned char* msg_to_send="MIAOU MIAOU NIGGA";
 /*void HAL_Delay(uint32_t milliseconds) {
 	//https://community.st.com/s/feed/0D50X00009XkW2MSAV
 	milliseconds = milliseconds/48000000;
@@ -401,7 +401,7 @@ void eventRxDone(pingPongFSM_t *const fsm)
 	transitionRxDone(fsm);
 	//BSP_LED_Off(LED_GREEN);
 	//BSP_LED_Toggle(LED_RED);
-	enterMasterTx(fsm);
+	enterMasterTx(fsm, msg_to_send);
 	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
 }
 
@@ -427,7 +427,7 @@ void eventTxTimeout(pingPongFSM_t *const fsm)
 void eventRxTimeout(pingPongFSM_t *const fsm)
 {
 	HAL_UART_Transmit(&huart2, (uint8_t *)"Event RX Timeout\r\n", 18, HAL_MAX_DELAY);
-    enterMasterTx(fsm);
+    enterMasterTx(fsm,msg_to_send);
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // rouge
 
@@ -442,7 +442,7 @@ void eventRxTimeout(pingPongFSM_t *const fsm)
 void eventRxError(pingPongFSM_t *const fsm)
 {
 	HAL_UART_Transmit(&huart2, (uint8_t *)"Event Rx Error\r\n", 16, HAL_MAX_DELAY);
-    enterMasterTx(fsm);
+    enterMasterTx(fsm,msg_to_send);
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // rouge
 
@@ -477,23 +477,24 @@ void enterMasterRx(pingPongFSM_t *const fsm)
   * @param  fsm pointer to FSM context
   * @retval None
   */
-void enterMasterTx(pingPongFSM_t *const fsm)
+void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send)
 {
-	unsigned char* strg = "Miaou\n";
-	unsigned char msg_len = 10;
+
+	//unsigned char* strg = "Miaou";
+	unsigned char msg_len = strlen(msg_to_send);
 
 
-	HAL_Delay(rxMargin);
+
+	//HAL_Delay(rxMargin);
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET); //vert
 
-
-	//HAL_UART_Transmit(&huart2, "...PING\r\n", 9, HAL_MAX_DELAY);
 	HAL_UART_Transmit(&huart2, "Master Tx start\r\n", 17, HAL_MAX_DELAY);
 	SUBGRF_SetDioIrqParams( IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 						  IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 						  IRQ_RADIO_NONE,
 						  IRQ_RADIO_NONE );
 	SUBGRF_SetSwitch(LORA_PA_OUTPUT, RFSWITCH_TX);
+
 	// Workaround 5.1 in DS.SX1261-2.W.APP (before each packet transmission)
 	//https://cdn.sparkfun.com/assets/6/b/5/1/4/SX1262_datasheet.pdf p.103
 	SUBGRF_WriteRegister(0x0889, (SUBGRF_ReadRegister(0x0889) | 0x04)); //default 0100 0x04 can be set to 1111
@@ -502,9 +503,8 @@ void enterMasterTx(pingPongFSM_t *const fsm)
 	// 2. Write the payload data to the transmit data buffer with Write_Buffer().
 	//11. Start the transmission by setting the sub-GHz radio in TX mode with Set_Tx(). After
 	//the transmission is finished, the sub-GHz radio enters automatically the Standby mode.
-	SUBGRF_SendPayload(strg/*&UART2_rxBuffer*/, msg_len, 0);//Timout
-	HAL_UART_Transmit(&huart2, (uint8_t *)"MSG TX:\r\n", 9, HAL_MAX_DELAY);
-	HAL_UART_Transmit(&huart2, &UART2_rxBuffer, 20, HAL_MAX_DELAY);
+	SUBGRF_SendPayload(msg_to_send/*&UART2_rxBuffer*/, msg_len, 0);//Timout
+	//HAL_UART_Transmit(&huart2, &UART2_rxBuffer, 20, HAL_MAX_DELAY);
 	//SUBGRF_SendPayload(strg, msg_len, 0);
 
 }

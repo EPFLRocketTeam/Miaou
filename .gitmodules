@@ -1,3 +1,6 @@
 [submodule "Utilities/RadioPacket"]
 	path = Utilities/RadioPacket
 	url = git@github.com:EPFLRocketTeam/RadioPacket.git
+[submodule "Utilities/ERT_RF_Protocol_Interface"]
+	path = Utilities/ERT_RF_Protocol_Interface
+	url = git@github.com:EPFLRocketTeam/ERT_RF_Protocol_Interface.git

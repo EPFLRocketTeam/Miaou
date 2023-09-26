@@ -107,7 +107,7 @@ void UART2_RxCallback(uint8_t opcode, uint16_t len, uint8_t* data);
 
 
 
-unsigned char* msg_to_send = "Miaoux";
+static char* msg_to_send = "Miaoux";
 /*void HAL_Delay(uint32_t milliseconds) {
 	//https://community.st.com/s/feed/0D50X00009XkW2MSAV
 	milliseconds = milliseconds/48000000;
@@ -144,7 +144,7 @@ int main(void)
 
 
 	 //pingPongFSM_t fsm;
-	 char uartBuff[200];
+	 //char uartBuff[200];
 
   /* USER CODE END 1 */
 
@@ -465,7 +465,7 @@ void eventRxDone(pingPongFSM_t *const fsm)
 	//BSP_LED_Off(LED_GREEN);
 	//BSP_LED_Toggle(LED_RED);
 	#if TX_ENABLED == 1
-	enterMasterTx(fsm,msg_to_send);
+	enterMasterTx(fsm, (uint8_t *) msg_to_send);
 	#else
 	enterMasterRx(fsm);
 	#endif
@@ -524,7 +524,7 @@ void eventRxError(pingPongFSM_t *const fsm)
 	HAL_UART_Transmit(&huart2, (uint8_t *)"Event Rx Error\r\n", 16, HAL_MAX_DELAY);
 	#endif
 	#if TX_ENABLED == 1
-	enterMasterTx(fsm,msg_to_send);
+	enterMasterTx(fsm, (uint8_t *)msg_to_send);
 	#else
 	enterMasterRx(fsm);
 	#endif

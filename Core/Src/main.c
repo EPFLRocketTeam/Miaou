@@ -34,6 +34,7 @@
 #include "comunicator.h"
 #include "util.h"
 #include "utility.h" //to share FSM with Interrupts
+#include <gnss/gnss.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -121,11 +122,17 @@ static char* msg_to_send = "Miaoux";
    }
 }*/
 
-uint8_t UART2_rxFragment;
-uint8_t UART2_rxBufferData[1024];
-util_buffer_u8_t UART2_rxBuffer;
+static uint8_t UART2_rxFragment;
+static uint8_t UART2_rxBufferData[1024];
+static util_buffer_u8_t UART2_rxBuffer;
 
-comunicator_t com;
+static uint8_t UART1_rxFragment;
+static uint8_t UART1_rxBufferData[1024];
+static util_buffer_u8_t UART1_rxBuffer;
+
+static comunicator_t com;
+
+static gnss_context_t gnss;
 
 /* USER CODE END PFP */
 
@@ -189,6 +196,10 @@ int main(void)
   comunicator_init(&com, &huart2, UART2_RxCallback);
   HAL_UART_Receive_IT(&huart2, &UART2_rxFragment, 1);
 
+
+  util_buffer_u8_init(&UART1_rxBuffer, UART1_rxBufferData, 1024);
+  HAL_UART_Receive_IT(&huart1, &UART1_rxFragment, 1);
+
   //comunicator_send(&com, opcode, length, data);
   radioInit();
 
@@ -205,51 +216,51 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 
 
-//int32_t rnd = 0;
-//10. Enable TxDone and timeout interrupts by configuring IRQ with Cfg_DioIrq().
-SUBGRF_SetDioIrqParams(IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE);
-//rnd = SUBGRF_GetRandom();
+	//int32_t rnd = 0;
+	//10. Enable TxDone and timeout interrupts by configuring IRQ with Cfg_DioIrq().
+	SUBGRF_SetDioIrqParams(IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE);
+	//rnd = SUBGRF_GetRandom();
 
-fsm.state = STATE_NULL;
-fsm.subState = SSTATE_NULL;
-fsm.rxTimeout = RX_TIMOUT; // 3000 ms rxTimeout
-//fsm.rxMargin = 3000000;   // 200 ms
-//fsm.randomDelay = rnd >> 22; // [0, 1023] ms
-//sprintf(uartBuff, "rand=%u\r\n", fsm.randomDelay);
-//HAL_UART_Transmit(&huart2, (uint8_t *)uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
+	fsm.state = STATE_NULL;
+	fsm.subState = SSTATE_NULL;
+	fsm.rxTimeout = RX_TIMOUT; // 3000 ms rxTimeout
+	//fsm.rxMargin = 3000000;   // 200 ms
+	//fsm.randomDelay = rnd >> 22; // [0, 1023] ms
+	//sprintf(uartBuff, "rand=%u\r\n", fsm.randomDelay);
+	//HAL_UART_Transmit(&huart2, (uint8_t *)uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
 
-//HAL_Delay(fsm.randomDelay);
-SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
-						IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
-						IRQ_RADIO_NONE, IRQ_RADIO_NONE );
-//SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
-SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
-SUBGRF_SetRx(fsm.rxTimeout << 6);
-//fsm.state = STATE_MASTER;
-//fsm.subState = SSTATE_RX;
-
-
-//radio_TX("salut",5);
-
-//HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-//HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
-//HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
-//SUBGRF_SetTxInfinitePreamble();
-//SUBGRF_SetTxContinuousWave();
+	//HAL_Delay(fsm.randomDelay);
+	SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
+							IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
+							IRQ_RADIO_NONE, IRQ_RADIO_NONE );
+	//SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
+	SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
+	SUBGRF_SetRx(fsm.rxTimeout << 6);
+	//fsm.state = STATE_MASTER;
+	//fsm.subState = SSTATE_RX;
 
 
+	//radio_TX("salut",5);
 
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);// power supplies
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);// RESET GPS
-//HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
+	//HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+	//HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+	//HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
+	//SUBGRF_SetTxInfinitePreamble();
+	//SUBGRF_SetTxContinuousWave();
 
 
 
-TIM2->ARR = 32e6/3000 -1;
-TIM2->CCR1 = 0.5*32e6/3000 -1 ;
-HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-HAL_Delay(300);
-HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);// power supplies
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);// RESET GPS
+	//HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
+
+
+
+	TIM2->ARR = 32e6/3000 -1;
+	TIM2->CCR1 = 0.5*32e6/3000 -1 ;
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+	HAL_Delay(300);
+	HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
 
 
 
@@ -270,6 +281,9 @@ HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
 	  while (eventReceptor == NULL) {
 		  while(!util_buffer_u8_isempty(&UART2_rxBuffer)) {
 			  comunicator_recv(&com, util_buffer_u8_get(&UART2_rxBuffer));
+		  }
+		  while(!util_buffer_u8_isempty(&UART1_rxBuffer)) {
+			  gnss_handle_fragment(&gnss, util_buffer_u8_get(&UART1_rxBuffer));
 		  }
 	  }
 	  eventReceptor(&fsm);
@@ -502,7 +516,7 @@ void eventRxTimeout(pingPongFSM_t *const fsm)
 	HAL_UART_Transmit(&huart2, (uint8_t *)"Event RX Timeout\r\n", 18, HAL_MAX_DELAY);
 	#endif
 	#if TX_ENABLED == 1
-	enterMasterTx(fsm,msg_to_send);
+	enterMasterTx(fsm, (uint8_t *)msg_to_send);
 	#else
 	enterMasterRx(fsm);
 	#endif
@@ -577,7 +591,7 @@ void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send)
 	//	globalTXcounter = 54;
 	//}
 	//globalTXcounter +=1;
-	unsigned int const msg_len  = strlen(msg_to_send);
+	//
 	//unsigned int const sz2  = strlen(globalTXcounter);
 	//char charValue[1];
 	//sprintf(charValue, "%c", globalTXcounter);
@@ -613,7 +627,8 @@ void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send)
 
 
 
-
+#if 0 // ne pas envoyer de miaou nigga svp
+	unsigned int const msg_len  = strlen(msg_to_send);
 	SUBGRF_SetSwitch(LORA_PA_OUTPUT, RFSWITCH_TX);
 
 	// Workaround 5.1 in DS.SX1261-2.W.APP (before each packet transmission)
@@ -628,7 +643,7 @@ void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send)
 	SUBGRF_SendPayload(msg_to_send/*&UART2_rxBuffer*/, msg_len, 0);//Timout
 	//HAL_UART_Transmit(&huart2, &UART2_rxBuffer, 20, HAL_MAX_DELAY);
 	//SUBGRF_SendPayload(strg, msg_len, 0);
-
+#endif
 
 
 }
@@ -696,8 +711,8 @@ void enterMasterTxLen(pingPongFSM_t *const fsm, uint8_t* msg_to_send, uint16_t l
 void transitionRxDone(pingPongFSM_t *const fsm)
 {
   PacketStatus_t packetStatus;
-  int32_t cfo;
-  char uartBuff[100];
+  //int32_t cfo;
+  //char uartBuff[100];
 
   // Workaround 15.3 in DS.SX1261-2.W.APP (because following RX w/ timeout sequence)
   SUBGRF_WriteRegister(0x0920, 0x00);
@@ -741,6 +756,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	if(huart == &huart2) {
 		util_buffer_u8_add(&UART2_rxBuffer, UART2_rxFragment);
 		HAL_UART_Receive_IT(&huart2, &UART2_rxFragment, 1);
+	} else if (huart == &huart1) {
+		util_buffer_u8_add(&UART1_rxBuffer, UART1_rxFragment);
+		HAL_UART_Receive_IT(&huart1, &UART1_rxFragment, 1);
 	}
 }
 

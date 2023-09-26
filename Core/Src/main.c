@@ -35,6 +35,7 @@
 #include "util.h"
 #include "utility.h" //to share FSM with Interrupts
 #include <gnss/gnss.h>
+#include <ERT_RF_Protocol_Interface/PacketDefinition.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -277,6 +278,7 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
 
+
 	  eventReceptor = NULL;
 	  while (eventReceptor == NULL) {
 		  while(!util_buffer_u8_isempty(&UART2_rxBuffer)) {
@@ -284,6 +286,10 @@ int main(void)
 		  }
 		  while(!util_buffer_u8_isempty(&UART1_rxBuffer)) {
 			  gnss_handle_fragment(&gnss, util_buffer_u8_get(&UART1_rxBuffer));
+			  if(gnss.done) {
+				  comunicator_send(&com, MIAOU_GNSS, sizeof(av_miaou_gnss_t), (uint8_t *) &gnss.data);
+
+			  }
 		  }
 	  }
 	  eventReceptor(&fsm);
@@ -734,7 +740,7 @@ void transitionRxDone(pingPongFSM_t *const fsm)
 		  uint16_t sizex = fsm->rxSize-5;
 		  if (sizex % 2 != 0) sizex++;
 		  // opcode RF is 0x65
-		  comunicator_send(&com, 0x65, (uint16_t) sizex, (uint8_t*) fsm->rxBuffer+4); // remove | 0xFF | 0xFA | packetID | size |
+		  comunicator_send(&com, MIAOU_RF, (uint16_t) sizex, (uint8_t*) fsm->rxBuffer+4); // remove | 0xFF | 0xFA | packetID | size |
 		  // comunicator_send(&com, 0xFF, (uint16_t) fsm->rxSize-5, (uint8_t*) fsm->rxBuffer+4); // Normal technique
 	  }
   }

@@ -62,8 +62,10 @@ typedef struct
 } pingPongFSM_t;
 
 
+void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send);
 
-pingPongFSM_t fsm;
+
+//pingPongFSM_t fsm;
 
 /* USER CODE END ET */
 

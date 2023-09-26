@@ -20,6 +20,7 @@
 #include "main.h"
 #include "dma.h"
 #include "subghz.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -30,36 +31,15 @@
 #include "radio_driver.h"
 #include "stm32wlxx.h"
 #include "stm32wlxx_hal.h"
+#include "comunicator.h"
+#include "util.h"
+#include "utility.h" //to share FSM with Interrupts
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-/*typedef enum
-{
-  STATE_NULL,
-  STATE_MASTER,
-  STATE_SLAVE
-} state_t;
 
-typedef enum
-{
-  SSTATE_NULL,
-  SSTATE_RX,
-  SSTATE_TX
-} substate_t;
-
-typedef struct
-{
-  state_t state;
-  substate_t subState;
-  uint32_t rxTimeout;
-  uint32_t rxMargin;
-  //uint32_t randomDelay;
-  char rxBuffer[RX_BUFFER_SIZE];
-  uint8_t rxSize;
-} pingPongFSM_t;*/
-
-int rxMargin = 0;
+int rxMargin = 10000; //commented DO NOT USE USE
 
 /* USER CODE END PTD */
 
@@ -69,14 +49,28 @@ int rxMargin = 0;
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define RF_FREQUENCY                                868000000 /* Hz */
-#define TX_OUTPUT_POWER                             1        /* dBm */
-#define LORA_BANDWIDTH                              0         /* Hz */
-#define LORA_SPREADING_FACTOR                       11
-#define LORA_CODINGRATE                             4
+#define RF_FREQUENCY                                867000000 /* Hz */ // AV UPLINK
+//#define RF_FREQUENCY                                869000000 /* Hz */   // AV DOWNLINK
+#define TX_OUTPUT_POWER                             16        /* dBm */ //Do not exceed 10 dBm !!!  (max >15  <22 dBm for HPmode)  (LP  0 < x < 10)
+#define LORA_BANDWIDTH                              0        /* Hz */ // 125kHz <=> 0
+#define LORA_SPREADING_FACTOR                       8 //10
+#define LORA_CODINGRATE                             3
 #define LORA_PREAMBLE_LENGTH                        8         /* Same for Tx and Rx */
 #define LORA_SYMBOL_TIMEOUT                         5         /* Symbols */
-#define LORA_PA_OUTPUT								RFO_LP // OR RFO_HP if > 15 dBm
+// HIGH POWER max 16 dBm
+// The STM32WL low power is amplified by AMP and thus really HIGH POWER!! => Highest power output
+// 2 antennas always, just power splitter as 2 antennas in Rocket!
+// So for the tests use mode HP (which is the lowest power in MiaouV2)
+#define LORA_PA_OUTPUT								RFO_HP // OR RFO_HP if > 15 dBm   RFO_HP = HIGH POWER (Without AmpliOp) max 16 dBm
+
+
+#define RX_TIMOUT									4294967290 //3000//4294967290 //ms
+#define VERBOSE 0  //  DO not put verbose if want to communicate with AV, as only 1 uart now
+#define TX_ENABLED 1
+
+//pingPongFSM_t fsm;
+
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -86,6 +80,9 @@ void (*volatile eventReceptor)(pingPongFSM_t *const fsm);
 PacketParams_t packetParams;  // TODO: this is lazy
 
 const RadioLoRaBandwidths_t Bandwidths[] = { LORA_BW_125, LORA_BW_250, LORA_BW_500 };
+
+uint8_t capsule_buf[256] = {0};
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -100,12 +97,17 @@ void eventRxTimeout(pingPongFSM_t *const fsm);
 void eventRxError(pingPongFSM_t *const fsm);
 void enterMasterRx(pingPongFSM_t *const fsm);
 void enterSlaveRx(pingPongFSM_t *const fsm);
-void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send);
+//void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send); IN MAIN.h !!!!!!!!!!!!!!!!!!!
+void enterMasterTxLen(pingPongFSM_t *const fsm, uint8_t* msg_to_send, uint16_t len);
 void enterSlaveTx(pingPongFSM_t *const fsm);
 void transitionRxDone(pingPongFSM_t *const fsm);
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+void UART2_RxCallback(uint8_t opcode, uint16_t len, uint8_t* data);
 
-unsigned char* msg_to_send="MIAOU MIAOU NIGGA";
+
+
+
+unsigned char* msg_to_send = "Miaoux";
 /*void HAL_Delay(uint32_t milliseconds) {
 	//https://community.st.com/s/feed/0D50X00009XkW2MSAV
 	milliseconds = milliseconds/48000000;
@@ -119,7 +121,11 @@ unsigned char* msg_to_send="MIAOU MIAOU NIGGA";
    }
 }*/
 
-uint8_t UART2_rxBuffer[50] = {0};
+uint8_t UART2_rxFragment;
+uint8_t UART2_rxBufferData[1024];
+util_buffer_u8_t UART2_rxBuffer;
+
+comunicator_t com;
 
 /* USER CODE END PFP */
 
@@ -163,10 +169,14 @@ int main(void)
   MX_SUBGHZ_Init();
   MX_DMA_Init();
   MX_USART2_UART_Init();
+  MX_USART1_UART_Init();
+  MX_TIM2_Init();
+  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);//GPS NReset
 
   //GPIO 0 ORANGE MILIEU
   //GPIO 1 Rouge
@@ -174,13 +184,19 @@ int main(void)
 
 
   //HAL_UART_Receive_IT(&huart2, UART2_rxBuffer, 5);
-	HAL_UART_Receive_DMA(&huart2, UART2_rxBuffer, 5);
 
+  util_buffer_u8_init(&UART2_rxBuffer, UART2_rxBufferData, 1024);
+  comunicator_init(&com, &huart2, UART2_RxCallback);
+  HAL_UART_Receive_IT(&huart2, &UART2_rxFragment, 1);
 
+  //comunicator_send(&com, opcode, length, data);
   radioInit();
-  HAL_UART_Transmit(&huart2, (uint8_t *)"Radio Init\r\n", 12, HAL_MAX_DELAY);
 
-//  printf("Radio init\n");
+
+ #if VERBOSE == 1
+  HAL_UART_Transmit(&huart2, (uint8_t *)"Radio Init\r\n", 12, HAL_MAX_DELAY);
+ #endif
+  //printf("Radio init\n");
 
 
   /* USER CODE END 2 */
@@ -189,14 +205,14 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 
 
-int32_t rnd = 0;
+//int32_t rnd = 0;
 //10. Enable TxDone and timeout interrupts by configuring IRQ with Cfg_DioIrq().
 SUBGRF_SetDioIrqParams(IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE);
-rnd = SUBGRF_GetRandom();
+//rnd = SUBGRF_GetRandom();
 
 fsm.state = STATE_NULL;
 fsm.subState = SSTATE_NULL;
-fsm.rxTimeout = 3000; // 3000 ms
+fsm.rxTimeout = RX_TIMOUT; // 3000 ms rxTimeout
 //fsm.rxMargin = 3000000;   // 200 ms
 //fsm.randomDelay = rnd >> 22; // [0, 1023] ms
 //sprintf(uartBuff, "rand=%u\r\n", fsm.randomDelay);
@@ -213,7 +229,6 @@ SUBGRF_SetRx(fsm.rxTimeout << 6);
 //fsm.subState = SSTATE_RX;
 
 
-
 //radio_TX("salut",5);
 
 //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
@@ -224,10 +239,26 @@ SUBGRF_SetRx(fsm.rxTimeout << 6);
 
 
 
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);// power supplies
+HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);// RESET GPS
+//HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
+
+
+
+TIM2->ARR = 32e6/3000 -1;
+TIM2->CCR1 = 0.5*32e6/3000 -1 ;
+HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+HAL_Delay(300);
+HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
+
+
+
 
 
   while (1)
   {
+
+
 
 
     /* USER CODE END WHILE */
@@ -236,7 +267,11 @@ SUBGRF_SetRx(fsm.rxTimeout << 6);
 
 
 	  eventReceptor = NULL;
-	  while (eventReceptor == NULL);
+	  while (eventReceptor == NULL) {
+		  while(!util_buffer_u8_isempty(&UART2_rxBuffer)) {
+			  comunicator_recv(&com, util_buffer_u8_get(&UART2_rxBuffer));
+		  }
+	  }
 	  eventReceptor(&fsm);
   }
   /* USER CODE END 3 */
@@ -284,6 +319,22 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
+
+
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
+{
+	if(htim == &htim16)
+	HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1); // bip buzzer
+}
+
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+// Here useful
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////
+
+
 /**
   * @brief  Initialize the Sub-GHz radio and dependent hardware.
   * @retval None
@@ -327,10 +378,10 @@ void radioInit(void)
   packetParams.PacketType = PACKET_TYPE_LORA;
   packetParams.Params.LoRa.CrcMode = LORA_CRC_ON;
   packetParams.Params.LoRa.HeaderType = LORA_PACKET_VARIABLE_LENGTH;
-  packetParams.Params.LoRa.InvertIQ = LORA_IQ_NORMAL;
+  packetParams.Params.LoRa.InvertIQ = LORA_IQ_INVERTED;
   packetParams.Params.LoRa.PayloadLength = 0xFF;
   packetParams.Params.LoRa.PreambleLength = LORA_PREAMBLE_LENGTH;
-  packetParams.Params.LoRa.InvertIQ = LORA_IQ_NORMAL;//LORA_IQ_INVERTED
+ // packetParams.Params.LoRa.InvertIQ = //LORA_IQ_NORMAL;//LORA_IQ_INVERTED
   // 4. Define the frame format with Set_PacketParams().
   SUBGRF_SetPacketParams(&packetParams);
 
@@ -339,6 +390,12 @@ void radioInit(void)
   // WORKAROUND - Optimizing the Inverted IQ Operation, see DS_SX1261-2_V1.2 datasheet chapter 15.4
   // RegIqPolaritySetup @address 0x0736
   SUBGRF_WriteRegister( 0x0736, SUBGRF_ReadRegister( 0x0736 ) | ( 1 << 2 ) );
+
+
+
+
+  //ADDED BA MARTIN TODO MAYBE DOES NOT WORK !!! TODO
+  //SUBGRF_SetRxBoosted(3000);
 }
 
 
@@ -383,7 +440,10 @@ void RadioOnDioIrq(RadioIrqMasks_t radioIrq)
   */
 void eventTxDone(pingPongFSM_t *const fsm)
 {
+	#if VERBOSE == 1
    HAL_UART_Transmit(&huart2, (uint8_t *)"Event TX Done\r\n", 15, HAL_MAX_DELAY);
+   //printf("Tx 1 packet!");
+#endif
    enterMasterRx(fsm);
    fsm->subState = SSTATE_RX;
    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET); //vert
@@ -395,14 +455,23 @@ void eventTxDone(pingPongFSM_t *const fsm)
   * @param  fsm pointer to FSM context
   * @retval None
   */
+// callback finish to receive
 void eventRxDone(pingPongFSM_t *const fsm)
 {
+	#if VERBOSE == 1
 	HAL_UART_Transmit(&huart2, (uint8_t *)"Event RX Done\r\n", 15, HAL_MAX_DELAY);
+	#endif
 	transitionRxDone(fsm);
 	//BSP_LED_Off(LED_GREEN);
 	//BSP_LED_Toggle(LED_RED);
-	enterMasterTx(fsm, msg_to_send);
-	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
+	#if TX_ENABLED == 1
+	enterMasterTx(fsm,msg_to_send);
+	#else
+	enterMasterRx(fsm);
+	#endif
+
+
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
 }
 
 
@@ -411,10 +480,13 @@ void eventRxDone(pingPongFSM_t *const fsm)
   * @param  fsm pointer to FSM context
   * @retval None
   */
+// Should not arrive, SF too big and set timout too small
 void eventTxTimeout(pingPongFSM_t *const fsm)
 {
+	#if VERBOSE == 1
 	HAL_UART_Transmit(&huart2, (uint8_t *)"Event TX Timeout\r\n", 18, HAL_MAX_DELAY);
-    enterMasterRx(fsm);
+	#endif
+	enterMasterRx(fsm);
 
 }
 
@@ -426,9 +498,16 @@ void eventTxTimeout(pingPongFSM_t *const fsm)
   */
 void eventRxTimeout(pingPongFSM_t *const fsm)
 {
+	#if VERBOSE == 1
 	HAL_UART_Transmit(&huart2, (uint8_t *)"Event RX Timeout\r\n", 18, HAL_MAX_DELAY);
-    enterMasterTx(fsm,msg_to_send);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
+	#endif
+	#if TX_ENABLED == 1
+	enterMasterTx(fsm,msg_to_send);
+	#else
+	enterMasterRx(fsm);
+	#endif
+
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // rouge
 
 }
@@ -441,9 +520,15 @@ void eventRxTimeout(pingPongFSM_t *const fsm)
   */
 void eventRxError(pingPongFSM_t *const fsm)
 {
+	#if VERBOSE == 1
 	HAL_UART_Transmit(&huart2, (uint8_t *)"Event Rx Error\r\n", 16, HAL_MAX_DELAY);
-    enterMasterTx(fsm,msg_to_send);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
+	#endif
+	#if TX_ENABLED == 1
+	enterMasterTx(fsm,msg_to_send);
+	#else
+	enterMasterRx(fsm);
+	#endif
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); // orange
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // rouge
 
 }
@@ -454,19 +539,28 @@ void eventRxError(pingPongFSM_t *const fsm)
   * @param  fsm pointer to FSM context
   * @retval None
   */
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Important
 void enterMasterRx(pingPongFSM_t *const fsm)
 {
+
+
+#if LORA_PA_OUTPUT == RFO_LP
+	HAL_Delay(1);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);// Disable power supplies
+
+#endif
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET); // orange
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET); // rouge
-
+	#if VERBOSE == 1
   HAL_UART_Transmit(&huart2, (uint8_t *)"Master Rx start\r\n", 17, HAL_MAX_DELAY);
+#endif
   SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
                           IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
                           IRQ_RADIO_NONE,
                           IRQ_RADIO_NONE );
   SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
   packetParams.Params.LoRa.PayloadLength = 0xFF;
-  SUBGRF_SetPacketParams(&packetParams);
+  SUBGRF_SetPacketParams(&packetParams); // todo maybe remove
   SUBGRF_SetRx(fsm->rxTimeout << 6);
 }
 
@@ -479,24 +573,52 @@ void enterMasterRx(pingPongFSM_t *const fsm)
   */
 void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send)
 {
+	//if(globalTXcounter == 70){
+	//	globalTXcounter = 54;
+	//}
+	//globalTXcounter +=1;
+	unsigned int const msg_len  = strlen(msg_to_send);
+	//unsigned int const sz2  = strlen(globalTXcounter);
+	//char charValue[1];
+	//sprintf(charValue, "%c", globalTXcounter);
 
-	//unsigned char* strg = "Miaou";
-	unsigned char msg_len = strlen(msg_to_send);
 
+	//char *concat            = (char*)malloc(7);
+	//memcpy(concat         , msg_to_send  , 5 );
+	//memcpy(concat + 5     ,charValue , 1 );
+	//concat[5+1] = '\0';
+    //msg_to_send = concat;
 
+	//unsigned char msg_len = 7;//strlen(msg_to_send);
 
 	//HAL_Delay(rxMargin);
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET); //vert
 
+#if LORA_PA_OUTPUT == RFO_LP
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET);// enable power supplies
+	HAL_Delay(12);
+#endif
+
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); //bip
+	HAL_TIM_Base_Start_IT(&htim16);
+
+
+	#if VERBOSE == 1
 	HAL_UART_Transmit(&huart2, "Master Tx start\r\n", 17, HAL_MAX_DELAY);
+	#endif
 	SUBGRF_SetDioIrqParams( IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 						  IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
 						  IRQ_RADIO_NONE,
-						  IRQ_RADIO_NONE );
+						  IRQ_RADIO_NONE ); // TODO irq to check if noise on channel for future projects
+
+
+
+
 	SUBGRF_SetSwitch(LORA_PA_OUTPUT, RFSWITCH_TX);
 
 	// Workaround 5.1 in DS.SX1261-2.W.APP (before each packet transmission)
 	//https://cdn.sparkfun.com/assets/6/b/5/1/4/SX1262_datasheet.pdf p.103
+	// très bresom
 	SUBGRF_WriteRegister(0x0889, (SUBGRF_ReadRegister(0x0889) | 0x04)); //default 0100 0x04 can be set to 1111
 	packetParams.Params.LoRa.PayloadLength = (uint8_t)msg_len;//0x4;
 	SUBGRF_SetPacketParams(&packetParams);
@@ -506,6 +628,60 @@ void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send)
 	SUBGRF_SendPayload(msg_to_send/*&UART2_rxBuffer*/, msg_len, 0);//Timout
 	//HAL_UART_Transmit(&huart2, &UART2_rxBuffer, 20, HAL_MAX_DELAY);
 	//SUBGRF_SendPayload(strg, msg_len, 0);
+
+
+
+}
+
+
+void enterMasterTxLen(pingPongFSM_t *const fsm, uint8_t* msg_to_send, uint16_t len)
+{
+	//HAL_Delay(rxMargin);
+
+#if LORA_PA_OUTPUT == RFO_LP
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET);// enable power supplies
+	HAL_Delay(10);
+#endif
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET); //vert
+
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+	HAL_TIM_Base_Start_IT(&htim16);
+
+	#if VERBOSE == 1
+	HAL_UART_Transmit(&huart2, "Master Tx start\r\n", 17, HAL_MAX_DELAY);
+	#endif
+	SUBGRF_SetDioIrqParams( IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
+						  IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
+						  IRQ_RADIO_NONE,
+						  IRQ_RADIO_NONE );
+	SUBGRF_SetSwitch(LORA_PA_OUTPUT, RFSWITCH_TX);
+
+	// Workaround 5.1 in DS.SX1261-2.W.APP (before each packet transmission)
+	//https://cdn.sparkfun.com/assets/6/b/5/1/4/SX1262_datasheet.pdf p.103
+	SUBGRF_WriteRegister(0x0889, (SUBGRF_ReadRegister(0x0889) | 0x04)); //default 0100 0x04 can be set to 1111
+	packetParams.Params.LoRa.PayloadLength = (uint8_t)len+5;//0x4;
+	SUBGRF_SetPacketParams(&packetParams);
+	// 2. Write the payload data to the transmit data buffer with Write_Buffer().
+	//11. Start the transmission by setting the sub-GHz radio in TX mode with Set_Tx(). After
+	//the transmission is finished, the sub-GHz radio enters automatically the Standby mode.
+	// TODO Capsule GS protocol
+	//  | 0xFF | 0xFA | packetID | size | ...data... | CRC |
+	capsule_buf[0] = 0xFF;
+	capsule_buf[1] = 0xFA;
+	capsule_buf[2] = 8; // = AV_TELEMETRY (CAPSULE_ID)
+	capsule_buf[3] = len;
+	memcpy(capsule_buf+4, msg_to_send, len); // not really optimal...
+	// compute CRC
+	uint8_t crc = 0;
+	for (uint8_t i = 0; i < len; i++) crc += msg_to_send[i];
+	capsule_buf[4+len] = crc;
+
+	//SUBGRF_SendPayload(msg_to_send/*&UART2_rxBuffer*/, len, 0);//Timout  // Martin' base
+	SUBGRF_SendPayload(capsule_buf/*&UART2_rxBuffer*/, len+5, 0);//Timout
+
+	//HAL_UART_Transmit(&huart2, &UART2_rxBuffer, 20, HAL_MAX_DELAY);
+	//SUBGRF_SendPayload(strg, msg_len, 0);
+
 
 }
 
@@ -521,7 +697,7 @@ void transitionRxDone(pingPongFSM_t *const fsm)
 {
   PacketStatus_t packetStatus;
   int32_t cfo;
-  char uartBuff[50];
+  char uartBuff[100];
 
   // Workaround 15.3 in DS.SX1261-2.W.APP (because following RX w/ timeout sequence)
   SUBGRF_WriteRegister(0x0920, 0x00);
@@ -529,18 +705,43 @@ void transitionRxDone(pingPongFSM_t *const fsm)
 
   SUBGRF_GetPayload((uint8_t *)fsm->rxBuffer, &fsm->rxSize, 0xFF);
   SUBGRF_GetPacketStatus(&packetStatus);
-  HAL_UART_Transmit(&huart2, fsm->rxBuffer, fsm->rxSize, HAL_MAX_DELAY);
-  sprintf(uartBuff, "RssiValue=%d dBm, SnrValue=%d Hz\r\n", packetStatus.Params.LoRa.RssiPkt, packetStatus.Params.LoRa.SnrPkt);
-  HAL_UART_Transmit(&huart2, uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
+
+  // ######################### AV-GS interface #######################
+  // Transfer packet to AV board if follows Capsule protocol
+  if (fsm->rxBuffer[0] == 0xFF && fsm->rxBuffer[1] == 0xFA && fsm->rxBuffer[3] == fsm->rxSize-5) { // delimiter + size check
+	  uint8_t crc = 0;
+	  for (uint8_t i = 4; i < fsm->rxSize-1; i++) crc += fsm->rxBuffer[i];
+	  if (crc == fsm->rxBuffer[fsm->rxSize-1]) { // check CRC
+		  // TODO check packetID ?
+		  //if (fsm->rxBuffer[2] == 0x??)
+
+		  // Technique du sale à cause de MSV2 du sale
+		  uint16_t sizex = fsm->rxSize-5;
+		  if (sizex % 2 != 0) sizex++;
+		  // opcode RF is 0x65
+		  comunicator_send(&com, 0x65, (uint16_t) sizex, (uint8_t*) fsm->rxBuffer+4); // remove | 0xFF | 0xFA | packetID | size |
+		  // comunicator_send(&com, 0xFF, (uint16_t) fsm->rxSize-5, (uint8_t*) fsm->rxBuffer+4); // Normal technique
+	  }
+  }
+  //HAL_UART_Transmit(&huart2, fsm->rxBuffer+4, fsm->rxSize-5, HAL_MAX_DELAY);
+  //HAL_UART_Transmit(&huart2, fsm->rxBuffer, fsm->rxSize, HAL_MAX_DELAY);
+
+  #if VERBOSE == 1
+  sprintf(uartBuff, "\n\rRssiValue=%d dBm, SnrValue=%d Hz\r\n", packetStatus.Params.LoRa.RssiPkt, packetStatus.Params.LoRa.SnrPkt);
+  //HAL_UART_Transmit(&huart2, uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
+ #endif
+}
+
+void UART2_RxCallback(uint8_t opcode, uint16_t len, uint8_t* data){
+	enterMasterTxLen(&fsm,data,len);
 }
 
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
-  HAL_UART_Transmit(&huart2, &UART2_rxBuffer, 10, 500);
-  //HAL_UART_Receive_IT(&huart2, &UART2_rxBuffer, 5);
-  //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET); // rouge
-  //HAL_UART_Transmit(&huart2, (uint8_t)"Miaou", 5, 500);
-  HAL_UART_Receive_DMA(&huart2, &UART2_rxBuffer, 10);
+	if(huart == &huart2) {
+		util_buffer_u8_add(&UART2_rxBuffer, UART2_rxFragment);
+		HAL_UART_Receive_IT(&huart2, &UART2_rxFragment, 1);
+	}
 }
 
 

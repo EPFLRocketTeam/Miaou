@@ -51,8 +51,8 @@ int rxMargin = 10000; //commented DO NOT USE USE
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define RF_FREQUENCY                                867000000 /* Hz */ // AV UPLINK
-//#define RF_FREQUENCY                                869000000 /* Hz */   // AV DOWNLINK
+//#define RF_FREQUENCY                                867000000 /* Hz */ // AV UPLINK
+#define RF_FREQUENCY                                869000000 /* Hz */   // AV DOWNLINK
 #define TX_OUTPUT_POWER                             16        /* dBm */ //Do not exceed 10 dBm !!!  (max >15  <22 dBm for HPmode)  (LP  0 < x < 10)
 #define LORA_BANDWIDTH                              0        /* Hz */ // 125kHz <=> 0
 #define LORA_SPREADING_FACTOR                       8 //10
@@ -184,7 +184,7 @@ int main(void)
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);//GPS NReset
+  //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);//GPS NReset
 
   //GPIO 0 ORANGE MILIEU
   //GPIO 1 Rouge
@@ -252,8 +252,8 @@ int main(void)
 
 
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);// power supplies
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);// RESET GPS
-	//HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
+//	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);// RESET GPS
+//	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
 
 
 

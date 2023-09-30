@@ -247,4 +247,3 @@ VP_TIM16_VS_no_output1.Signal=TIM16_VS_no_output1
 VP_TIM2_VS_ClockSourceINT.Mode=Internal
 VP_TIM2_VS_ClockSourceINT.Signal=TIM2_VS_ClockSourceINT
 board=custom
-isbadioc=false

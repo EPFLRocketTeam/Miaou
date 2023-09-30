@@ -41,7 +41,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-int rxMargin = 10000; //commented DO NOT USE USE
+//int rxMargin = 10000; //commented DO NOT USE USE
 
 /* USER CODE END PTD */
 
@@ -51,9 +51,19 @@ int rxMargin = 10000; //commented DO NOT USE USE
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-//#define RF_FREQUENCY                                867000000 /* Hz */ // AV UPLINK
+
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+#define UPLINK_MIAOU  		true  // If 'false' it is the DOWNLINK_MIAOU
+/////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+
+#if UPLINK_MIAOU
+#define RF_FREQUENCY                                867000000 /* Hz */ // AV UPLINK
+#else
 #define RF_FREQUENCY                                869000000 /* Hz */   // AV DOWNLINK
-#define TX_OUTPUT_POWER                             16        /* dBm */ //Do not exceed 10 dBm !!!  (max >15  <22 dBm for HPmode)  (LP  0 < x < 10)
+#endif
+#define TX_OUTPUT_POWER                             22        /* dBm */ //Do not exceed 10 dBm !!!  (max >15  <22 dBm for HPmode)  (LP  0 < x < 10)
 #define LORA_BANDWIDTH                              0        /* Hz */ // 125kHz <=> 0
 #define LORA_SPREADING_FACTOR                       8 //10
 #define LORA_CODINGRATE                             3
@@ -63,12 +73,12 @@ int rxMargin = 10000; //commented DO NOT USE USE
 // The STM32WL low power is amplified by AMP and thus really HIGH POWER!! => Highest power output
 // 2 antennas always, just power splitter as 2 antennas in Rocket!
 // So for the tests use mode HP (which is the lowest power in MiaouV2)
-#define LORA_PA_OUTPUT								RFO_HP // OR RFO_HP if > 15 dBm   RFO_HP = HIGH POWER (Without AmpliOp) max 16 dBm
+#define LORA_PA_OUTPUT								RFO_HP // OR RFO_HP if > 15 dBm   RFO_HP = HIGH POWER (Without AmpliOp) max 22 dBm (16 a 22)
 
 
 #define RX_TIMOUT									4294967290 //3000//4294967290 //ms
 #define VERBOSE 0  //  DO not put verbose if want to communicate with AV, as only 1 uart now
-#define TX_ENABLED 1
+#define TX_ENABLED 0
 
 //pingPongFSM_t fsm;
 
@@ -633,7 +643,7 @@ void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send)
 
 
 
-#if 0 // ne pas envoyer de miaou nigga svp
+//#if 0 // ne pas envoyer de miaou nigga svp
 	unsigned int const msg_len  = strlen(msg_to_send);
 	SUBGRF_SetSwitch(LORA_PA_OUTPUT, RFSWITCH_TX);
 
@@ -649,7 +659,7 @@ void enterMasterTx(pingPongFSM_t *const fsm, unsigned char* msg_to_send)
 	SUBGRF_SendPayload(msg_to_send/*&UART2_rxBuffer*/, msg_len, 0);//Timout
 	//HAL_UART_Transmit(&huart2, &UART2_rxBuffer, 20, HAL_MAX_DELAY);
 	//SUBGRF_SendPayload(strg, msg_len, 0);
-#endif
+//#endif
 
 
 }

@@ -54,7 +54,7 @@
 
 /////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////
-#define UPLINK_MIAOU  		true  // If 'false' it is the DOWNLINK_MIAOU
+#define UPLINK_MIAOU  		false  // If 'false' it is the DOWNLINK_MIAOU
 /////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////
 
@@ -78,7 +78,12 @@
 
 #define RX_TIMOUT									4294967290 //3000//4294967290 //ms
 #define VERBOSE 0  //  DO not put verbose if want to communicate with AV, as only 1 uart now
-#define TX_ENABLED 0
+
+#if UPLINK_MIAOU
+#define TX_ENABLED 0  // UPLINK
+#else
+#define TX_ENABLED 1  // DOWLINK
+#endif
 
 //pingPongFSM_t fsm;
 
